@@ -1,0 +1,68 @@
+package extractors
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+var regfHeader = []byte("regf")
+var carveSize = 0x200000 // 2MB per hive
+
+func CarveRegistryHives(data []byte, outDir string) error {
+	found := 0
+
+	for offset := 0; offset < len(data); offset++ {
+		if offset+4 > len(data) {
+			break
+		}
+		if bytes.Equal(data[offset:offset+4], regfHeader) {
+			if offset+0x10 > len(data) {
+				continue
+			}
+
+			hiveSize := int(uint32(data[offset+0x0C]) | uint32(data[offset+0x0D])<<8 | uint32(data[offset+0x0E])<<16 | uint32(data[offset+0x0F])<<24)
+
+			if hiveSize <= 0 || offset+hiveSize > len(data) {
+				continue
+			}
+
+			end := offset + hiveSize
+			chunk := data[offset:end]
+
+			label := classifyHive(chunk)
+			found++
+			if label == "" {
+				label = fmt.Sprintf("hive-%d", found)
+			}
+
+			outPath := filepath.Join(outDir, label+".regf")
+			err := os.WriteFile(outPath, chunk, 0644)
+			if err != nil {
+				return fmt.Errorf("failed to write hive to %s: %w", outPath, err)
+			}
+
+			fmt.Printf("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)\n", label, outPath, offset, hiveSize)
+			offset = end
+		}
+	}
+	if found == 0 {
+		fmt.Println("[-] No registry hives found")
+	}
+	return nil
+}
+
+func classifyHive(chunk []byte) string {
+	switch {
+	case bytes.Contains(chunk, []byte("SAM\\Domains")):
+		return "SAM"
+	case bytes.Contains(chunk, []byte("ControlSet001\\Services")):
+		return "SYSTEM"
+	case bytes.Contains(chunk, []byte("PolicySecrets")) || bytes.Contains(chunk, []byte("NL$KM")):
+		return "SECURITY"
+	default:
+		return ""
+	}
+}
+
