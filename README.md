@@ -56,8 +56,7 @@ hyperscan scan --remote --host 192.168.1.100 --username Administrator --password
 ---
 
 ### Author
-Jack Maunsell
-CyberMaxx Offensive Security Intern
+Jack Maunsell - CyberMaxx Offensive Security Intern
 
 ---
 
