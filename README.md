@@ -36,10 +36,7 @@ hyperscan scan --auto
 
 ```bash
 # Scan remote host using SMB and WinRM (Windows creds required)
-hyperscan scan --remote \
-  --host 192.168.1.100 \
-  --username Administrator \
-  --password 'SuperSecure!'
+hyperscan scan --remote --host 192.168.1.100 --username Administrator --password 'CrazyPassword14!'
 ```
 
 ---
@@ -55,3 +52,16 @@ hyperscan scan --remote \
 --username         Remote login username
 --password         Remote login password
 ```
+
+---
+
+### Author
+Jack Maunsell
+CyberMaxx Offensive Security Intern
+
+---
+
+### TODO
+- Live system memory scanning via agents
+- Plugin support for custom extractors
+- Optional JSON output
