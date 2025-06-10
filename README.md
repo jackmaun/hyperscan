@@ -18,6 +18,7 @@
 
 ```bash
 go build -o hyperscan
+```
 
 ---
 
@@ -26,10 +27,12 @@ go build -o hyperscan
 ```bash
 hyperscan scan --input ./memory.vmem
 hyperscan scan --input ./disk.vmdk --out ./loot
+```
 
 ```bash
 # Auto-scan local common VM directories
 hyperscan scan --auto
+```
 
 ```bash
 # Scan remote host using SMB and WinRM (Windows creds required)
@@ -37,6 +40,7 @@ hyperscan scan --remote \
   --host 192.168.1.100 \
   --username Administrator \
   --password 'SuperSecure!'
+```
 
 ---
 
@@ -50,3 +54,4 @@ hyperscan scan --remote \
 --host             Remote host IP or name
 --username         Remote login username
 --password         Remote login password
+```
