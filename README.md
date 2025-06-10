@@ -68,7 +68,7 @@ hyperscan scan --remote --winrm --host 192.168.1.100 --username Administrator --
 ---
 
 ### Author
-Jack Maunsell - CyberMaxx Offensive Security Intern
+Jack Maunsell - Colorado State University
 
 ---
 
