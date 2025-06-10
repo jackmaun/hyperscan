@@ -8,7 +8,6 @@ import (
 )
 
 var regfHeader = []byte("regf")
-var carveSize = 0x200000 // 2MB per hive
 
 func CarveRegistryHives(data []byte, outDir string) error {
 	found := 0
