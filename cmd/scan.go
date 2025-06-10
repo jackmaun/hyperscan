@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -10,8 +12,9 @@ import (
 	"time"
 
 	"github.com/hirochachacha/go-smb2"
-	"github.com/spf13/cobra"
 	"github.com/jackmaun/hyperscan/scanners"
+	"github.com/masterzen/winrm"
+	"github.com/spf13/cobra"
 )
 
 var inputPath string
@@ -27,8 +30,8 @@ var scanCmd = &cobra.Command{
 	Short: "Scan a memory or disk image for secrets",
 	Run: func(cmd *cobra.Command, args []string) {
 		if remoteScan {
-			fmt.Println("[*] Starting remote scan via SMB2...")
-			err := handleRemoteScan(remoteHost, remoteUser, remotePass)
+			fmt.Println("[*] Starting remote scan via WinRM...")
+			err := handleRemoteScanWinRM(remoteHost, remoteUser, remotePass)
 			if err != nil {
 				fmt.Println("[-] Remote scan failed:", err)
 			}
@@ -73,7 +76,7 @@ func init() {
 	scanCmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to VMEM or VMDK file")
 	scanCmd.Flags().StringVarP(&outputPath, "out", "o", "./output", "Directory to write carved artifacts")
 	scanCmd.Flags().BoolVar(&autoScan, "auto", false, "Automatically scan common VM file locations (Windows only)")
-	scanCmd.Flags().BoolVar(&remoteScan, "remote", false, "Scan remotely via SMB2")
+	scanCmd.Flags().BoolVar(&remoteScan, "remote", false, "Scan remotely via WinRM and SMB2")
 	scanCmd.Flags().StringVar(&remoteHost, "host", "", "Remote host IP or name")
 	scanCmd.Flags().StringVar(&remoteUser, "username", "", "Remote username")
 	scanCmd.Flags().StringVar(&remotePass, "password", "", "Remote password")
@@ -109,10 +112,38 @@ func findVMFiles() ([]string, error) {
 	return found, nil
 }
 
-func handleRemoteScan(host, user, pass string) error {
+func handleRemoteScanWinRM(host, user, pass string) error {
+	endpoint := winrm.NewEndpoint(host, 5985, false, false, nil, nil, nil, 0)
+	client, err := winrm.NewClient(endpoint, user, pass)
+	if err != nil {
+		return fmt.Errorf("failed to create WinRM client: %w", err)
+	}
+
+	zipPath := `C:\Users\Public\hyperscan.zip`
+	powershell := fmt.Sprintf(`
+		$files = Get-ChildItem -Path C:\ -Recurse -Include *.vmem,*.vmdk -ErrorAction SilentlyContinue
+		if ($files.Count -gt 0) {
+    			Compress-Archive -Path $files.FullName -DestinationPath "%s" -Force
+		} else {
+    			Write-Output "NO_MATCHES"
+		}
+		`, zipPath)
+
+	var stdout, stderr bytes.Buffer
+	cmd := fmt.Sprintf(`powershell -Command "%s"`, strings.ReplaceAll(powershell, `"`, `\"`))
+	_, err = client.Run(cmd, &stdout, &stderr)
+	if err != nil {
+		return fmt.Errorf("WinRM command failed: %w", err)
+	}
+
+	if strings.Contains(stdout.String(), "NO_MATCHES") {
+		fmt.Println("[-] No matching files found remotely.")
+		return nil
+	}
+
 	conn, err := net.DialTimeout("tcp", host+":445", 5*time.Second)
 	if err != nil {
-		return fmt.Errorf("failed to connect to host: %w", err)
+		return fmt.Errorf("failed to connect to SMB: %w", err)
 	}
 	defer conn.Close()
 
@@ -122,70 +153,73 @@ func handleRemoteScan(host, user, pass string) error {
 			Password: pass,
 		},
 	}
-
 	session, err := d.Dial(conn)
 	if err != nil {
-		return fmt.Errorf("failed to establish SMB session: %w", err)
+		return fmt.Errorf("failed to start SMB session: %w", err)
 	}
 	defer session.Logoff()
 
 	fs, err := session.Mount("C$")
 	if err != nil {
-		return fmt.Errorf("failed to mount C$ share: %w", err)
+		return fmt.Errorf("failed to mount C$: %w", err)
 	}
 	defer fs.Umount()
 
-	fmt.Println("[*] Searching for .vmem/.vmdk files on remote system...")
-	return walkAndScanRemote(fs, `\`, host)
-}
-
-func walkAndScanRemote(fs *smb2.Share, root, host string) error {
-	entries, err := fs.ReadDir(root)
+	remoteFile := `Users\Public\hyperscan.zip`
+	rf, err := fs.Open(remoteFile)
 	if err != nil {
-		return nil
+		return fmt.Errorf("could not open remote zip: %w", err)
+	}
+	defer rf.Close()
+
+	localZip := filepath.Join(os.TempDir(), "hyperscan_downloaded.zip")
+	lf, err := os.Create(localZip)
+	if err != nil {
+		return fmt.Errorf("could not create local zip: %w", err)
+	}
+	defer lf.Close()
+
+	_, err = io.Copy(lf, rf)
+	if err != nil {
+		return fmt.Errorf("could not copy zip: %w", err)
 	}
 
-	for _, entry := range entries {
-		fullPath := filepath.Join(root, entry.Name())
+	fmt.Println("[+] Extracting and scanning contents...")
+	return extractAndScan(localZip)
+}
 
-		if entry.IsDir() {
-			err := walkAndScanRemote(fs, fullPath, host)
-			if err != nil {
-				fmt.Println("[-] Failed to scan subdirectory:", err)
-			}
-		} else {
-			if strings.HasSuffix(strings.ToLower(entry.Name()), ".vmem") || strings.HasSuffix(strings.ToLower(entry.Name()), ".vmdk") {
-				fmt.Printf("[+] Found: %s\n", fullPath)
+func extractAndScan(zipPath string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %w", err)
+	}
+	defer r.Close()
 
-				remoteFile, err := fs.Open(fullPath)
-				if err != nil {
-					fmt.Println("[-] Failed to open remote file:", err)
-					continue
-				}
-				defer remoteFile.Close()
-
-				localName := strings.ReplaceAll(strings.TrimPrefix(fullPath, `\`), `\`, `_`)
-				localPath := filepath.Join(os.TempDir(), "hyperscan_"+localName)
-				outFile, err := os.Create(localPath)
-				if err != nil {
-					fmt.Println("[-] Failed to create local file:", err)
-					continue
-				}
-
-				_, err = io.Copy(outFile, remoteFile)
-				outFile.Close()
-				if err != nil {
-					fmt.Println("[-] Failed to copy file:", err)
-					continue
-				}
-
-				fmt.Printf("[*] Scanning %s...\n", localPath)
-				err = scanners.ScanMemory(localPath, outputPath)
-				if err != nil {
-					fmt.Println("[-] Scan failed:", err)
-				}
-			}
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
 		}
+		outPath := filepath.Join(os.TempDir(), "hyperscan_extracted_"+filepath.Base(f.Name))
+		outFile, err := os.Create(outPath)
+		if err != nil {
+			fmt.Println("[-] Could not create:", outPath)
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			outFile.Close()
+			fmt.Println("[-] Could not open zipped file:", f.Name)
+			continue
+		}
+		_, err = io.Copy(outFile, rc)
+		rc.Close()
+		outFile.Close()
+		if err != nil {
+			fmt.Println("[-] Could not extract:", f.Name)
+			continue
+		}
+		fmt.Println("[*] Scanning extracted file:", outPath)
+		_ = scanners.ScanMemory(outPath, outputPath)
 	}
 	return nil
 }
