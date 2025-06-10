@@ -25,6 +25,7 @@ var remoteHost string
 var remoteUser string
 var remotePass string
 var useWinRM bool
+var remoteShare string
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -90,6 +91,7 @@ func init() {
 	scanCmd.Flags().StringVar(&remoteUser, "username", "", "Remote username")
 	scanCmd.Flags().StringVar(&remotePass, "password", "", "Remote password")
 	scanCmd.Flags().BoolVar(&useWinRM, "winrm", false, "Use WinRM + PowerShell + SMB2 zip mode for remote scan")
+	scanCmd.Flags().StringVar(&remoteShare, "share", "C$", "SMB share name (e.g. C$, D$, shared)")
 	AddCommand(scanCmd)
 }
 
@@ -143,9 +145,9 @@ func handleRecursiveSMBScan(host, user, pass string) error {
 	}
 	defer session.Logoff()
 
-	fs, err := session.Mount("C$")
+	fs, err := session.Mount(remoteShare)
 	if err != nil {
-		return fmt.Errorf("failed to mount C$: %w", err)
+		return fmt.Errorf("failed to mount %s: %w", remoteShare, err)
 	}
 	defer fs.Umount()
 
@@ -162,7 +164,8 @@ func handleRecursiveSMBScan(host, user, pass string) error {
 	}
 
 	for _, path := range matched {
-		fmt.Println("[+] Found:", path)
+		unc := fmt.Sprintf(`\\%s\%s%s`, host, remoteShare, path)
+		fmt.Println("[+] Found:", unc)
 		tmpName := filepath.Join(os.TempDir(), "hyperscan_"+filepath.Base(path))
 		err := copySMBFile(fs, path, tmpName)
 		if err != nil {
