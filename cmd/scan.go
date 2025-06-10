@@ -29,6 +29,18 @@ var scanCmd = &cobra.Command{
 	Use:   "scan",
 	Short: "Scan a memory or disk image for secrets",
 	Run: func(cmd *cobra.Command, args []string) {
+fmt.Println(`
+  _                                               
+ | |__  _   _ _ __   ___ _ __ ___  ___ __ _ _ __  
+ | '_ \| | | | '_ \ / _ \ '__/ __|/ __/ _' | '_ \ 
+ | | | | |_| | |_) |  __/ |  \__ \ (_| (_| | | | |
+ |_| |_|\__, | .__/ \___|_|  |___/\___\__,_|_| |_|
+        |___/|_|
+
+ hyperscan - VM artifact scanner
+
+ Author : Jack Maunsell - CyberMaxx
+`)
 		if remoteScan {
 			fmt.Println("[*] Starting remote scan via WinRM...")
 			err := handleRemoteScanWinRM(remoteHost, remoteUser, remotePass)
