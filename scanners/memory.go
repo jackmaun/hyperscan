@@ -44,7 +44,7 @@ func ScanMemory(path string, outDir string) error {
 	for name, re := range patterns {
 		matches := re.FindAll(mmapData, -1)
 		if len(matches) > 0 {
-			fmt.Println("[+] Found %d %s matches:\n", len(matches), name)
+			fmt.Printf("[+] Found %d %s matches:\n", len(matches), name)
 			for _, m := range matches {
 				fmt.Println("	", string(m))
 			}
