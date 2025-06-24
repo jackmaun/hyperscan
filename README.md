@@ -68,7 +68,7 @@ hyperscan scan --remote --winrm --host 192.168.1.100 --username Administrator --
 ---
 ### Simple Demo
 
-[!Tool Demo](docs/hyperscan-simple.png)
+![Simple Tool Demo](docs/hyperscan-simple.png)
 
 ---
 
