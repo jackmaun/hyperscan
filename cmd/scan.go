@@ -1,17 +1,16 @@
 package cmd
 
 import (
-	"archive/zip"
 	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
-	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/hirochachacha/go-smb2"
 	"github.com/jackmaun/hyperscan/scanners"
 	"github.com/masterzen/winrm"
 	"github.com/spf13/cobra"
@@ -24,8 +23,7 @@ var remoteScan bool
 var remoteHost string
 var remoteUser string
 var remotePass string
-var useWinRM bool
-var remoteShare string
+var jsonOutput bool
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -33,17 +31,9 @@ var scanCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		if remoteScan {
 			fmt.Println("[*] Starting remote scan...")
-
-			if useWinRM {
-				err := handleRemoteScanWinRM(remoteHost, remoteUser, remotePass)
-				if err != nil {
-					fmt.Println("[-] Remote scan via WinRM failed:", err)
-				}
-			} else {
-				err := handleRecursiveSMBScan(remoteHost, remoteUser, remotePass)
-				if err != nil {
-					fmt.Println("[-] Remote scan via SMB failed:", err)
-				}
+			err := handleRemoteScan(remoteHost, remoteUser, remotePass)
+			if err != nil {
+				fmt.Println("[-] Remote scan failed:", err)
 			}
 			return
 		}
@@ -61,10 +51,11 @@ var scanCmd = &cobra.Command{
 			}
 			for _, file := range files {
 				fmt.Println("[+] Scanning:", file)
-				err := scanners.ScanMemory(file, outputPath)
+				results, err := scanners.ScanMemory(file, outputPath, jsonOutput)
 				if err != nil {
 					fmt.Println("[-] Scan failed for", file, ":", err)
 				}
+				printResults(results, jsonOutput)
 			}
 			return
 		}
@@ -75,10 +66,11 @@ var scanCmd = &cobra.Command{
 		}
 
 		fmt.Println("Running scan on:", inputPath)
-		err := scanners.ScanMemory(inputPath, outputPath)
+		results, err := scanners.ScanMemory(inputPath, outputPath, jsonOutput)
 		if err != nil {
 			fmt.Println("Scan failed:", err)
 		}
+		printResults(results, jsonOutput)
 	},
 }
 
@@ -90,8 +82,7 @@ func init() {
 	scanCmd.Flags().StringVar(&remoteHost, "host", "", "Remote host IP or name")
 	scanCmd.Flags().StringVar(&remoteUser, "username", "", "Remote username")
 	scanCmd.Flags().StringVar(&remotePass, "password", "", "Remote password")
-	scanCmd.Flags().BoolVar(&useWinRM, "winrm", false, "Use WinRM + PowerShell + SMB2 zip mode for remote scan")
-	scanCmd.Flags().StringVar(&remoteShare, "share", "C$", "SMB share name (e.g. C$, D$, shared)")
+	scanCmd.Flags().BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	AddCommand(scanCmd)
 }
 
@@ -124,203 +115,130 @@ func findVMFiles() ([]string, error) {
 	return found, nil
 }
 
-func handleRecursiveSMBScan(host, user, pass string) error {
-	fmt.Println("[*] Connecting to remote SMB share...")
-
-	conn, err := net.DialTimeout("tcp", host+":445", 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("failed to connect to SMB: %w", err)
-	}
-	defer conn.Close()
-
-	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     user,
-			Password: pass,
-		},
-	}
-	session, err := d.Dial(conn)
-	if err != nil {
-		return fmt.Errorf("failed to start SMB session: %w", err)
-	}
-	defer session.Logoff()
-
-	fs, err := session.Mount(remoteShare)
-	if err != nil {
-		return fmt.Errorf("failed to mount %s: %w", remoteShare, err)
-	}
-	defer fs.Umount()
-
-	fmt.Println("[*] Recursively searching remote C$ for .vmem and .vmdk files...")
-	var matched []string
-
-	err = recursiveSMBFind(fs, `\`, &matched)
-	if err != nil {
-		return fmt.Errorf("recursive search failed: %w", err)
-	}
-	if len(matched) == 0 {
-		fmt.Println("[-] No matching files found on remote system.")
-		return nil
-	}
-
-	for _, path := range matched {
-		unc := fmt.Sprintf(`\\%s\%s%s`, host, remoteShare, path)
-		fmt.Println("[+] Found:", unc)
-		tmpName := filepath.Join(os.TempDir(), "hyperscan_"+filepath.Base(path))
-		err := copySMBFile(fs, path, tmpName)
-		if err != nil {
-			fmt.Println("[-] Failed to copy:", path, "->", err)
-			continue
-		}
-		fmt.Println("[*] Scanning copied file:", tmpName)
-		_ = scanners.ScanMemory(tmpName, outputPath)
-	}
-	return nil
-}
-
-func recursiveSMBFind(fs *smb2.Share, base string, found *[]string) error {
-	entries, err := fs.ReadDir(base)
-	if err != nil {
-		return nil
-	}
-	for _, entry := range entries {
-		name := filepath.Join(base, entry.Name())
-		if entry.IsDir() {
-			_ = recursiveSMBFind(fs, name, found)
-		} else if strings.HasSuffix(strings.ToLower(entry.Name()), ".vmem") ||
-			strings.HasSuffix(strings.ToLower(entry.Name()), ".vmdk") {
-			*found = append(*found, name)
-		}
-	}
-	return nil
-}
-
-func copySMBFile(fs *smb2.Share, remotePath, localPath string) error {
-	src, err := fs.Open(remotePath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	dst, err := os.Create(localPath)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
-
-	_, err = io.Copy(dst, src)
-	return err
-}
-
-func handleRemoteScanWinRM(host, user, pass string) error {
+func handleRemoteScan(host, user, pass string) error {
 	endpoint := winrm.NewEndpoint(host, 5985, false, false, nil, nil, nil, 0)
 	client, err := winrm.NewClient(endpoint, user, pass)
 	if err != nil {
 		return fmt.Errorf("failed to create WinRM client: %w", err)
 	}
 
-	zipPath := `C:\Users\Public\hyperscan.zip`
-	powershell := fmt.Sprintf(`
-		$files = Get-ChildItem -Path C:\ -Recurse -Include *.vmem,*.vmdk -ErrorAction SilentlyContinue
-		if ($files.Count -gt 0) {
-			Compress-Archive -Path $files.FullName -DestinationPath "%s" -Force
-		} else {
-			Write-Output "NO_MATCHES"
-		}
-	`, zipPath)
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to get executable path: %w", err)
+	}
+	remotePath := `C:\\Users\\Public\\hyperscan.exe`
+
+	exeContent, err := os.ReadFile(exePath)
+	if err != nil {
+		return fmt.Errorf("failed to read executable: %w", err)
+	}
+
+	encodedExe := base64.StdEncoding.EncodeToString(exeContent)
+
+	uploadCmd := fmt.Sprintf("powershell -Command \"[System.IO.File]::WriteAllBytes('%s', [System.Convert]::FromBase64String('%s'))\"", remotePath, encodedExe)
 
 	var stdout, stderr bytes.Buffer
-	cmd := fmt.Sprintf(`powershell -Command "%s"`, strings.ReplaceAll(powershell, `"`, `\"`))
-	_, err = client.Run(cmd, &stdout, &stderr)
+	_, err = client.Run(uploadCmd, &stdout, &stderr)
 	if err != nil {
-		return fmt.Errorf("WinRM command failed: %w", err)
+		return fmt.Errorf("failed to upload hyperscan binary: %w\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
 	}
 
-	if strings.Contains(stdout.String(), "NO_MATCHES") {
-		fmt.Println("[-] No matching files found remotely.")
-		return nil
-	}
-
-	conn, err := net.DialTimeout("tcp", host+":445", 5*time.Second)
+	startServerCmd := fmt.Sprintf("powershell -Command \"Start-Process -FilePath %s -ArgumentList 'serve'\"", remotePath)
+	_, err = client.Run(startServerCmd, &stdout, &stderr)
 	if err != nil {
-		return fmt.Errorf("failed to connect to SMB: %w", err)
-	}
-	defer conn.Close()
-
-	d := &smb2.Dialer{
-		Initiator: &smb2.NTLMInitiator{
-			User:     user,
-			Password: pass,
-		},
-	}
-	session, err := d.Dial(conn)
-	if err != nil {
-		return fmt.Errorf("failed to start SMB session: %w", err)
-	}
-	defer session.Logoff()
-
-	fs, err := session.Mount("C$")
-	if err != nil {
-		return fmt.Errorf("failed to mount C$: %w", err)
-	}
-	defer fs.Umount()
-
-	remoteFile := `Users\Public\hyperscan.zip`
-	rf, err := fs.Open(remoteFile)
-	if err != nil {
-		return fmt.Errorf("could not open remote zip: %w", err)
-	}
-	defer rf.Close()
-
-	localZip := filepath.Join(os.TempDir(), "hyperscan_downloaded.zip")
-	lf, err := os.Create(localZip)
-	if err != nil {
-		return fmt.Errorf("could not create local zip: %w", err)
-	}
-	defer lf.Close()
-
-	_, err = io.Copy(lf, rf)
-	if err != nil {
-		return fmt.Errorf("could not copy zip: %w", err)
+		return fmt.Errorf("failed to start hyperscan server: %w\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
 	}
 
-	fmt.Println("[+] Extracting and scanning contents...")
-	return extractAndScan(localZip)
-}
+	fmt.Println("[*] Hyperscan server started on remote host.")
 
-func extractAndScan(zipPath string) error {
-	r, err := zip.OpenReader(zipPath)
-	if err != nil {
-		return fmt.Errorf("failed to open zip: %w", err)
-	}
-	defer r.Close()
-
-	for _, f := range r.File {
-		if f.FileInfo().IsDir() {
-			continue
-		}
-		outPath := filepath.Join(os.TempDir(), "hyperscan_extracted_"+filepath.Base(f.Name))
-		outFile, err := os.Create(outPath)
+	remoteFiles, err := findRemoteVMFiles(client)
 		if err != nil {
-			fmt.Println("[-] Could not create:", outPath)
-			continue
+			return fmt.Errorf("failed to find remote VM files: %w", err)
 		}
-		rc, err := f.Open()
+
+		if len(remoteFiles) == 0 {
+			fmt.Println("[-] No .vmem or .vmdk files found on remote system.")
+			return nil
+		}
+
+	for _, file := range remoteFiles {
+		fmt.Printf("[*] Scanning remote file: %s\n", file)
+		scanURL := fmt.Sprintf("http://%s:8080/scan?path=%s", host, file)
+		resp, err := http.Get(scanURL)
 		if err != nil {
-			outFile.Close()
-			fmt.Println("[-] Could not open zipped file:", f.Name)
+			fmt.Printf("[-] Failed to scan remote file %s: %v\n", file, err)
 			continue
 		}
-		_, err = io.Copy(outFile, rc)
-		rc.Close()
-		outFile.Close()
-		if err != nil {
-			fmt.Println("[-] Could not extract:", f.Name)
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			fmt.Printf("[-] Remote scan for %s failed with status %d: %s\n", file, resp.StatusCode, string(bodyBytes))
 			continue
 		}
-		fmt.Println("[*] Scanning extracted file:", outPath)
-		_ = scanners.ScanMemory(outPath, outputPath)
+
+		var results map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&results);
+			err != nil {
+				fmt.Printf("[-] Failed to decode JSON response for %s: %v\n", file, err)
+				continue
+			}
+		printResults(results, jsonOutput)
 	}
+
 	return nil
 }
 
+func findRemoteVMFiles(client *winrm.Client) ([]string, error) {
+	powershell := `
+		$files = @()
+		$commonPaths = @(
+			"$env:USERPROFILE\\Documents\\Virtual Machines",
+			"$env:USERPROFILE\\VirtualBox VMs",
+			"$env:TEMP",
+			"C:\\ProgramData\\VMware",
+			"C:\\Program Files (x86)\\VMware\\VMware Workstation",
+			"C:\\VirtualBox VMs",
+			"D:\\VMs\\"
+		)
+		foreach ($base in $commonPaths) {
+			$files += Get-ChildItem -Path $base -Recurse -Include *.vmem,*.vmdk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+		}
+		$files | ConvertTo-Json
+	`
+
+	var stdout, stderr bytes.Buffer
+	cmd := fmt.Sprintf(`powershell -Command "%s"`, strings.ReplaceAll(powershell, `"`, `\"`))
+	_, err := client.Run(cmd, &stdout, &stderr)
+	if err != nil {
+		return nil, fmt.Errorf("WinRM command failed: %w\nStdout: %s\nStderr: %s", err, stdout.String(), stderr.String())
+	}
+
+	var remoteFiles []string
+	if err := json.Unmarshal(stdout.Bytes(), &remoteFiles);
+		err != nil {
+			return nil, fmt.Errorf("failed to unmarshal remote files JSON: %w\nOutput: %s", err, stdout.String())
+		}
+
+	return remoteFiles, nil
+}
+
+func printResults(results map[string]interface{}, jsonOutput bool) {
+	if jsonOutput {
+		jsonBytes, err := json.MarshalIndent(results, "", "  ")
+		if err != nil {
+			fmt.Println("[-] Failed to marshal results to JSON:", err)
+			return
+		}
+		fmt.Println(string(jsonBytes))
+	} else {
+		for name, matches := range results {
+			if stringSlice, ok := matches.([]string); ok {
+				fmt.Printf("[+] Found %d %s matches:\n", len(stringSlice), name)
+				for _, m := range stringSlice {
+					fmt.Println("    ", m)
+				}
+			}
+		}
+	}
+}

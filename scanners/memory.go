@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sync"
 
 	"github.com/edsrzf/mmap-go"
 	"github.com/jackmaun/hyperscan/extractors"
@@ -14,7 +15,7 @@ import (
 var patterns = map[string]*regexp.Regexp{
 	"AWS Access Key":            regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	"JWT":                       regexp.MustCompile(`eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+`),
-	"Password Key":              regexp.MustCompile(`(?i)password\s*=\s*[^\s"]{4,}`),
+	"Password Key":              regexp.MustCompile(`(?i)password\s*=\s*[^"]{4,}`),
 	"NTLM Hash":                 regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
 	"NTLMv2 Hash":               regexp.MustCompile(`[a-zA-Z0-9_.\\-]+::[a-zA-Z0-9_.\\-]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,256}:.+`),
 	"NetNTLMv2 Challenge":       regexp.MustCompile(`[^\s:]+::[^\s:]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,}`),
@@ -26,51 +27,86 @@ var patterns = map[string]*regexp.Regexp{
 	"DPAPI Blob":                regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
 }
 
-func ScanMemory(path string, outDir string) error {
+func ScanMemory(path string, outDir string, jsonOutput bool) (map[string]interface{}, error) {
 	os.MkdirAll(outDir, 0755)
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("failed to open file: %w", err)
+		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
 
 	mmapData, err := mmap.Map(file, mmap.RDONLY, 0)
 	if err != nil {
-		return fmt.Errorf("failed to mmap file: %w", err)
+		return nil, fmt.Errorf("failed to mmap file: %w", err)
 	}
 	defer mmapData.Unmap()
 
+	results := make(map[string]interface{})
+	var mutex = &sync.Mutex{}
+
 	fmt.Printf("Scanning memory file (%s, size: %d bytes)...\n", filepath.Base(path), len(mmapData))
 
-	for name, re := range patterns {
-		matches := re.FindAll(mmapData, -1)
-		if len(matches) > 0 {
-			fmt.Printf("[+] Found %d %s matches:\n", len(matches), name)
-			for _, m := range matches {
-				fmt.Println("    ", string(m))
+	var wg sync.WaitGroup
+	wg.Add(4)
+
+	go func() {
+		defer wg.Done()
+		for name, re := range patterns {
+			matches := re.FindAll(mmapData, -1)
+			if len(matches) > 0 {
+				var stringMatches []string
+				for _, m := range matches {
+					stringMatches = append(stringMatches, string(m))
+				}
+				mutex.Lock()
+				results[name] = stringMatches
+				mutex.Unlock()
 			}
 		}
-	}
+	}()
 
-	scanEntropyRegions(mmapData, 64, 32, 4.8)
+	go func() {
+		defer wg.Done()
+		scanEntropyRegions(mmapData, 64, 32, 4.8, results, mutex)
+	}()
 
-	fmt.Println("Carving for registry hives...")
-	err = extractors.CarveRegistryHives(mmapData, outDir)
-	if err != nil {
-		fmt.Println("Carving Failed:", err)
-	}
-	return nil
+	go func() {
+		defer wg.Done()
+		extractors.CarveRegistryHives(mmapData, outDir)
+	}()
+
+	go func() {
+		defer wg.Done()
+		carved, err := extractors.CarveLsass(mmapData, outDir)
+		if err != nil {
+			fmt.Println("[-] LSASS carving failed:", err)
+			return
+		}
+		if len(carved) > 0 {
+			mutex.Lock()
+			results["Carved LSASS Dumps"] = carved
+			mutex.Unlock()
+		}
+	}()
+
+	wg.Wait()
+
+	return results, nil
 }
 
-func scanEntropyRegions(data []byte, windowSize, step int, threshold float64) {
-	fmt.Printf("[*] Scanning for high-entropy regions (window=%d, threshold=%.2f)...\n", windowSize, threshold)
+func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mutex *sync.Mutex) {
+	var highEntropyRegions []string
 	for i := 0; i < len(data)-windowSize; i += step {
 		window := data[i : i+windowSize]
 		ent := shannonEntropy(window)
 		if ent >= threshold {
-			fmt.Printf("[!] High entropy region (%.2f) at offset 0x%X\n", ent, i)
-			fmt.Printf("    %X...\n", window[:min(16, len(window))])
+			highEntropyRegions = append(highEntropyRegions, fmt.Sprintf("High entropy region (%.2f) at offset 0x%X", ent, i))
 		}
+	}
+	if len(highEntropyRegions) > 0 {
+		mutex.Lock()
+		results["High Entropy Regions"] = highEntropyRegions
+		mutex.Unlock()
 	}
 }
 
@@ -100,4 +136,3 @@ func min(a, b int) int {
 	}
 	return b
 }
-
