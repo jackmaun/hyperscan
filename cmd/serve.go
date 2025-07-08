@@ -9,14 +9,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var port string
+
 var serveCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Run hyperscan in server mode for remote scanning",
 	Long:  `Run hyperscan in server mode for remote scanning. This is not intended to be used directly by users.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("[*] Starting hyperscan server on port 8080...")
+		fmt.Printf("[*] Starting hyperscan server on port %s...\n", port)
 		http.HandleFunc("/scan", handleScanRequest)
-		http.ListenAndServe(":8080", nil)
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
+			fmt.Printf("[-] Failed to start server: %v\n", err)
+		}
 	},
 }
 
@@ -39,4 +43,5 @@ func handleScanRequest(w http.ResponseWriter, r *http.Request) {
 
 func init() {
 	AddCommand(serveCmd)
+	serveCmd.Flags().StringVarP(&port, "port", "p", "8080", "Port to listen on")
 }
