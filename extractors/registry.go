@@ -21,6 +21,7 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		offset += index
 
 		if offset+0x10 > len(data) {
+			fmt.Printf("[-] Skipping regf at 0x%X: not enough data for size field\n", offset)
 			offset += len(regfHeader)
 			continue
 		}
@@ -28,12 +29,25 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		hiveSize := int(uint32(data[offset+0x0C])|uint32(data[offset+0x0D])<<8|uint32(data[offset+0x0E])<<16|uint32(data[offset+0x0F])<<24)
 
 		if hiveSize <= 0 || offset+hiveSize > len(data) {
+			fmt.Printf("[-] Skipping regf at 0x%X: invalid size (%d bytes)\n", offset, hiveSize)
 			offset += len(regfHeader)
 			continue
 		}
 
-		end := offset + hiveSize
-		chunk := data[offset:end]
+		hbinOffset := offset + 0x1000
+		if hbinOffset+4 > len(data) || !bytes.Equal(data[hbinOffset:hbinOffset+4], []byte("hbin")) {
+			fmt.Printf("[-] Skipping regf at 0x%X: missing 'hbin' at offset 0x%X\n", offset, hbinOffset)
+			offset += len(regfHeader)
+			continue
+		}
+
+		chunk := data[offset : offset+hiveSize]
+
+		if !bytes.Contains(chunk, []byte("nk")) {
+			fmt.Printf("[-] Skipping regf at 0x%X: missing 'nk' record\n", offset)
+			offset += len(regfHeader)
+			continue
+		}
 
 		label := classifyHive(chunk)
 		found++
@@ -48,7 +62,7 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		}
 
 		fmt.Printf("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)\n", label, outPath, offset, hiveSize)
-		offset = end
+		offset += hiveSize
 	}
 
 	if found == 0 {
@@ -56,7 +70,6 @@ func CarveRegistryHives(data []byte, outDir string) error {
 	}
 	return nil
 }
-
 
 func classifyHive(chunk []byte) string {
 	switch {
@@ -70,3 +83,4 @@ func classifyHive(chunk []byte) string {
 		return ""
 	}
 }
+
