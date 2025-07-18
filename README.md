@@ -14,6 +14,7 @@
 - Carves and classifies registry hives (SAM, SYSTEM, SECURITY).
 - Carves LSASS process memory.
 - Carves browser SQLite databases (history, cookies, etc.).
+- Scans files with custom YARA rules
 
 - Detects a wide range of secrets, including:
     - AWS Access Keys
@@ -49,6 +50,9 @@ hyperscan scan --input ./disk.vhd --out ./loot
 
 # Scan a local memory dump and output results as JSON
 hyperscan scan --input ./memory.vmem --json
+
+# Scan with YARA rules from a directory
+hyperscan scan --input ./memory.raw --yara ./rules
 
 # Auto-scan common local VM directories
 hyperscan scan --auto
