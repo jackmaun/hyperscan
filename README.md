@@ -1,21 +1,32 @@
 # hyperscan
 
-**hyperscan** is a memory and disk artifact scanner built for offensive security assessments. It scans `.vmem` and `.vmdk` files for sensitive data like credentials, tokens, registry hives, NTLM hashes, DPAPI material, and high-entropy blobs.
+**hyperscan** is a memory and disk artifact scanner built for offensive security assessments. It scans a wide range of memory and disk image formats for sensitive data like credentials, tokens, registry hives, NTLM hashes, DPAPI material, and high-entropy blobs.
 
 ---
 
 ### Features
 
-- Scan local `.vmem` or `.vmdk` memory/disk images
-- Entropy-based secret detection
-- Auto-discover VM files in common Windows directories
-- Remote scanning (scan on target)
+- Scan local memory/disk images, including `.vmem`, `.vmdk`, `.vdi`, `.vhd`, `.vhdx`, `.raw`, and `.dd` files.
+- Entropy-based secret detection.
+- Auto-discover VM files in common Windows directories.
+- Remote scanning (scan on target).
 
-- Carves and classifies registry hives (SAM, SYSTEM, SECURITY)
-- Carves LSASS process memory
+- Carves and classifies registry hives (SAM, SYSTEM, SECURITY).
+- Carves LSASS process memory.
+- Carves browser SQLite databases (history, cookies, etc.).
 
-- Logs full UNC paths for remote artifacts
-- JSON output for easy integration with other tools
+- Detects a wide range of secrets, including:
+    - AWS Access Keys
+    - JWTs
+    - Passwords in plaintext
+    - NTLM Hashes
+    - SSH Private Keys
+    - Google Cloud API Keys
+    - Azure Client Secrets
+    - and more...
+
+- Logs full UNC paths for remote artifacts.
+- JSON output for easy integration with other tools.
 
 ---
 
@@ -34,7 +45,7 @@ go build -o hyperscan
 hyperscan scan --input ./memory.vmem
 
 # Scan a local disk image and extract artifacts to ./loot
-hyperscan scan --input ./disk.vmdk --out ./loot
+hyperscan scan --input ./disk.vhd --out ./loot
 
 # Scan a local memory dump and output results as JSON
 hyperscan scan --input ./memory.vmem --json
@@ -51,7 +62,7 @@ hyperscan scan --remote --host 192.168.1.100 --username Administrator --password
 ### Options
 
 ```bash
---input, -i         Path to VMEM or VMDK file
+--input, -i         Path to memory or disk image file (e.g., .vmem, .vmdk, .vdi, .vhd, .vhdx, .raw, .dd)
 --out, -o           Output directory (default: ./output)
 --threads, -t       Number of threads for parallel scanning (default: 1)
 --auto              Automatically scan local common VM file locations

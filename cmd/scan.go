@@ -27,7 +27,7 @@ var jsonOutput bool
 var threads int
 
 var scanCmd = &cobra.Command{
-	Use:   "scan",
+	Use:	"scan",
 	Short: "Scan a memory or disk image for secrets",
 	Run: func(cmd *cobra.Command, args []string) {
 		if remoteScan {
@@ -47,7 +47,7 @@ var scanCmd = &cobra.Command{
 				return
 			}
 			if len(files) == 0 {
-				fmt.Println("[-] No .vmem or .vmdk files found in common locations.")
+				fmt.Println("[-] No supported files found in common locations.")
 				return
 			}
 			for _, file := range files {
@@ -76,7 +76,7 @@ var scanCmd = &cobra.Command{
 }
 
 func init() {
-	scanCmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to VMEM or VMDK file")
+	scanCmd.Flags().StringVarP(&inputPath, "input", "i", "", "Path to memory or disk image file (e.g., .vmem, .vmdk, .vdi, .vhd, .vhdx, .raw, .dd)")
 	scanCmd.Flags().StringVarP(&outputPath, "out", "o", "./output", "Directory to write carved artifacts")
 	scanCmd.Flags().BoolVar(&autoScan, "auto", false, "Automatically scan common VM file locations (Windows only)")
 	scanCmd.Flags().BoolVar(&remoteScan, "remote", false, "Scan remotely via SMB or WinRM")
@@ -108,7 +108,7 @@ func findVMFiles() ([]string, error) {
 	var found []string
 	for _, base := range getCommonVMPaths() {
 		_ = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && (strings.HasSuffix(strings.ToLower(path), ".vmem") || strings.HasSuffix(strings.ToLower(path), ".vmdk")) {
+			if err == nil && !info.IsDir() && (strings.HasSuffix(strings.ToLower(path), ".vmem") || strings.HasSuffix(strings.ToLower(path), ".vmdk") || strings.HasSuffix(strings.ToLower(path), ".vdi") || strings.HasSuffix(strings.ToLower(path), ".vhd") || strings.HasSuffix(strings.ToLower(path), ".vhdx") || strings.HasSuffix(strings.ToLower(path), ".raw") || strings.HasSuffix(strings.ToLower(path), ".dd")) {
 				found = append(found, path)
 			}
 			return nil
@@ -159,7 +159,7 @@ func handleRemoteScan(host, user, pass string) error {
 		}
 
 		if len(remoteFiles) == 0 {
-			fmt.Println("[-] No .vmem or .vmdk files found on remote system.")
+			fmt.Println("[-] No supported files found on remote system.")
 			return nil
 		}
 
@@ -204,7 +204,7 @@ func findRemoteVMFiles(client *winrm.Client) ([]string, error) {
 			"D:\\VMs\\"
 		)
 		foreach ($base in $commonPaths) {
-			$files += Get-ChildItem -Path $base -Recurse -Include *.vmem,*.vmdk -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+			$files += Get-ChildItem -Path $base -Recurse -Include *.vmem,*.vmdk,*.vdi,*.vhd,*.vhdx,*.raw,*.dd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
 		}
 		$files | ConvertTo-Json
 	`

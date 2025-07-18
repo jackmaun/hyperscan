@@ -15,7 +15,7 @@ import (
 var patterns = map[string]*regexp.Regexp{
 	"AWS Access Key":            regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
 	"JWT":                       regexp.MustCompile(`eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+`),
-	"Password Key":              regexp.MustCompile(`(?i)password\s*=\s*[^"]{4,}`),
+	"Password Key":              regexp.MustCompile(`(?i)password\s*=\s*[^\"]{4,}`),
 	"NTLM Hash":                 regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
 	"NTLMv2 Hash":               regexp.MustCompile(`[a-zA-Z0-9_.\\-]+::[a-zA-Z0-9_.\\-]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,256}:.+`),
 	"NetNTLMv2 Challenge":       regexp.MustCompile(`[^\s:]+::[^\s:]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,}`),
@@ -25,6 +25,9 @@ var patterns = map[string]*regexp.Regexp{
 	"Kerberos Base64 Ticket":    regexp.MustCompile(`(?:YII|doIF)[A-Za-z0-9+/=]{100,}`),
 	"DPAPI GUID":                regexp.MustCompile(`(?i)\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}`),
 	"DPAPI Blob":                regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
+	"SSH Private Key":           regexp.MustCompile(`-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----`),
+	"Google Cloud API Key":      regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`),
+	"Azure Client Secret":       regexp.MustCompile(`[a-zA-Z0-9\-_~\.]{40}`),
 }
 
 type patternJob struct {
@@ -52,7 +55,21 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 	fmt.Printf("Scanning memory file (%s, size: %d bytes) with %d threads...\n", filepath.Base(path), len(mmapData), threads)
 
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(5)
+
+	go func() {
+		defer wg.Done()
+		carved, err := extractors.CarveBrowserData(mmapData, outDir)
+		if err != nil {
+			fmt.Println("[-] Browser data carving failed:", err)
+			return
+		}
+		if len(carved) > 0 {
+			mutex.Lock()
+			results["Carved Browser Databases"] = carved
+			mutex.Unlock()
+		}
+	}()
 
 	go func() {
 		defer wg.Done()

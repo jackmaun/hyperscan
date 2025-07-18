@@ -83,4 +83,3 @@ func classifyHive(chunk []byte) string {
 		return ""
 	}
 }
-
