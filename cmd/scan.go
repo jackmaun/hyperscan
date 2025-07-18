@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/fatih/color"
 	"github.com/jackmaun/hyperscan/scanners"
 	"github.com/masterzen/winrm"
 	"github.com/spf13/cobra"
@@ -30,6 +31,17 @@ var scanCmd = &cobra.Command{
 	Use:	"scan",
 	Short: "Scan a memory or disk image for secrets",
 	Run: func(cmd *cobra.Command, args []string) {
+		if yaraRulesPath != "" {
+			fmt.Println("[*] Starting YARA scan...")
+			results, err := scanners.ScanYara(inputPath, yaraRulesPath, outputPath, jsonOutput, threads)
+			if err != nil {
+				fmt.Println("[-] YARA scan failed:", err)
+				return
+			}
+			printResults(results, jsonOutput)
+			return
+		}
+
 		if remoteScan {
 			fmt.Println("[*] Starting remote scan...")
 			err := handleRemoteScan(remoteHost, remoteUser, remotePass)
@@ -229,7 +241,7 @@ func printResults(results map[string]interface{}, jsonOutput bool) {
 	if jsonOutput {
 		jsonBytes, err := json.MarshalIndent(results, "", "  ")
 		if err != nil {
-			fmt.Println("[-] Failed to marshal results to JSON:", err)
+			color.Red("[-] Failed to marshal results to JSON:", err)
 			return
 		}
 		fmt.Println(string(jsonBytes))
@@ -237,6 +249,7 @@ func printResults(results map[string]interface{}, jsonOutput bool) {
 		for name, matches := range results {
 			if stringSlice, ok := matches.([]string); ok {
 				fmt.Printf("[+] Found %d %s matches:\n", len(stringSlice), name)
+
 				for _, m := range stringSlice {
 					fmt.Println("    ", m)
 				}

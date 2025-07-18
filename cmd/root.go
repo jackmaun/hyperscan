@@ -11,8 +11,18 @@ var rootCmd = &cobra.Command{
 	Long:  "Hyperscan scans virtual memory and disk images for sensitive artifacts like passwords, tokens, and secrets.",
 
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		printBanner();
+		printBanner()
 	},
+}
+
+var yaraRulesPath string
+
+func init() {
+	rootCmd.PersistentFlags().StringVarP(&yaraRulesPath, "yara-rules", "y", "", "Path to YARA rules directory")
+	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printBanner()
+		_ = cmd.Usage()
+	})
 }
 
 func init() {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/fatih/color"
 )
 
 var regfHeader = []byte("regf")
@@ -61,12 +63,12 @@ func CarveRegistryHives(data []byte, outDir string) error {
 			return fmt.Errorf("failed to write hive to %s: %w", outPath, err)
 		}
 
-		fmt.Printf("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)\n", label, outPath, offset, hiveSize)
+		fmt.Printf(color.GreenString("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)\n", label, outPath, offset, hiveSize))
 		offset += hiveSize
 	}
 
 	if found == 0 {
-		fmt.Println("[-] No registry hives found")
+		color.New(color.FgRed).Println("[-] No registry hives found")
 	}
 	return nil
 }
