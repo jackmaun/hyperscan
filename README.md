@@ -79,6 +79,8 @@ hyperscan scan --remote --host 192.168.1.100 --username Administrator --password
 
 ![Simple Tool Demo](docs/hyperscan-simple.png)
 
+![Registry Dump Demo](docs/reg-dump-hyperscan.png)
+
 ---
 
 ### Author
