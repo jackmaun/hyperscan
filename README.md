@@ -31,6 +31,17 @@
 
 ---
 
+### Prerequisites
+
+To enable YARA scanning, you must have the native YARA development library installed:
+
+```bash
+sudo apt-get update
+sudo apt-get install libyara-dev
+```
+
+---
+
 ### Installation
 
 ```bash
