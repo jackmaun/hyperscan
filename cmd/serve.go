@@ -31,7 +31,7 @@ func handleScanRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results, err := scanners.ScanMemory(filePath, "/tmp/hyperscan", true)
+	results, err := scanners.ScanMemory(filePath, "/tmp/hyperscan", true, 1)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

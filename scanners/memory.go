@@ -27,7 +27,12 @@ var patterns = map[string]*regexp.Regexp{
 	"DPAPI Blob":                regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
 }
 
-func ScanMemory(path string, outDir string, jsonOutput bool) (map[string]interface{}, error) {
+type patternJob struct {
+	name string
+	re   *regexp.Regexp
+}
+
+func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[string]interface{}, error) {
 	os.MkdirAll(outDir, 0755)
 	file, err := os.Open(path)
 	if err != nil {
@@ -44,25 +49,38 @@ func ScanMemory(path string, outDir string, jsonOutput bool) (map[string]interfa
 	results := make(map[string]interface{})
 	var mutex = &sync.Mutex{}
 
-	fmt.Printf("Scanning memory file (%s, size: %d bytes)...\n", filepath.Base(path), len(mmapData))
+	fmt.Printf("Scanning memory file (%s, size: %d bytes) with %d threads...\n", filepath.Base(path), len(mmapData), threads)
 
 	var wg sync.WaitGroup
 	wg.Add(4)
 
 	go func() {
 		defer wg.Done()
-		for name, re := range patterns {
-			matches := re.FindAll(mmapData, -1)
-			if len(matches) > 0 {
-				var stringMatches []string
-				for _, m := range matches {
-					stringMatches = append(stringMatches, string(m))
+		jobs := make(chan patternJob, len(patterns))
+		var patternWg sync.WaitGroup
+		for i := 0; i < threads; i++ {
+			patternWg.Add(1)
+			go func() {
+				defer patternWg.Done()
+				for job := range jobs {
+					matches := job.re.FindAll(mmapData, -1)
+					if len(matches) > 0 {
+						var stringMatches []string
+						for _, m := range matches {
+							stringMatches = append(stringMatches, string(m))
+						}
+						mutex.Lock()
+						results[job.name] = stringMatches
+						mutex.Unlock()
+					}
 				}
-				mutex.Lock()
-				results[name] = stringMatches
-				mutex.Unlock()
-			}
+			}()
 		}
+		for name, re := range patterns {
+			jobs <- patternJob{name: name, re: re}
+		}
+		close(jobs)
+		patternWg.Wait()
 	}()
 
 	go func() {

@@ -24,6 +24,7 @@ var remoteHost string
 var remoteUser string
 var remotePass string
 var jsonOutput bool
+var threads int
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -51,7 +52,7 @@ var scanCmd = &cobra.Command{
 			}
 			for _, file := range files {
 				fmt.Println("[+] Scanning:", file)
-				results, err := scanners.ScanMemory(file, outputPath, jsonOutput)
+				results, err := scanners.ScanMemory(file, outputPath, jsonOutput, threads)
 				if err != nil {
 					fmt.Println("[-] Scan failed for", file, ":", err)
 				}
@@ -66,7 +67,7 @@ var scanCmd = &cobra.Command{
 		}
 
 		fmt.Println("Running scan on:", inputPath)
-		results, err := scanners.ScanMemory(inputPath, outputPath, jsonOutput)
+		results, err := scanners.ScanMemory(inputPath, outputPath, jsonOutput, threads)
 		if err != nil {
 			fmt.Println("Scan failed:", err)
 		}
@@ -83,6 +84,7 @@ func init() {
 	scanCmd.Flags().StringVar(&remoteUser, "username", "", "Remote username")
 	scanCmd.Flags().StringVar(&remotePass, "password", "", "Remote password")
 	scanCmd.Flags().BoolVar(&jsonOutput, "json", false, "Enable JSON output")
+	scanCmd.Flags().IntVarP(&threads, "threads", "t", 1, "Number of threads for parallel scanning")
 	AddCommand(scanCmd)
 }
 

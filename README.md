@@ -53,6 +53,7 @@ hyperscan scan --remote --host 192.168.1.100 --username Administrator --password
 ```bash
 --input, -i         Path to VMEM or VMDK file
 --out, -o           Output directory (default: ./output)
+--threads, -t       Number of threads for parallel scanning (default: 1)
 --auto              Automatically scan local common VM file locations
 --json              Enable JSON output
 
