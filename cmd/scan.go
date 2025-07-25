@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/fatih/color"
@@ -28,7 +29,7 @@ var jsonOutput bool
 var threads int
 
 var scanCmd = &cobra.Command{
-	Use:	"scan",
+	Use:   "scan",
 	Short: "Scan a memory or disk image for secrets",
 	Run: func(cmd *cobra.Command, args []string) {
 		if yaraRulesPath != "" {
@@ -105,23 +106,44 @@ func getCommonVMPaths() []string {
 	if err != nil {
 		return nil
 	}
-	return []string{
+	paths := []string{
 		filepath.Join(home, "Documents", "Virtual Machines"),
 		filepath.Join(home, "VirtualBox VMs"),
 		filepath.Join(home, "AppData", "Local", "Temp"),
-		`C:\\ProgramData\\VMware`,
-		`C:\\Program Files (x86)\\VMware\\VMware Workstation`,
-		`C:\\VirtualBox VMs`,
-		`D:\\VMs\\`,
+		`C:\ProgramData\VMware`,
+		`C:\Program Files (x86)\VMware\VMware Workstation`,
+		`C:\VirtualBox VMs`,
+		`D:\VMs\`,
 	}
+
+	hypervBase := `C:\ProgramData\Microsoft\Windows\Hyper-V\Virtual Machines`
+	_ = filepath.Walk(hypervBase, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() {
+			if matched, _ := regexp.MatchString(`[a-fA-F0-9\-]{36}`, info.Name()); matched {
+				paths = append(paths, path)
+			}
+		}
+		return nil
+	})
+
+	return paths
 }
 
 func findVMFiles() ([]string, error) {
 	var found []string
-	for _, base := range getCommonVMPaths() {
+	filePattern := regexp.MustCompile(`(?i)\.(vmem|vmdk|vdi|vhd|vhdx|raw|dd|bin|vsv|avhdx)$`)
+	paths := getCommonVMPaths()
+
+	for _, base := range paths {
+		fmt.Println("[*] Searching:", base)
 		_ = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() && (strings.HasSuffix(strings.ToLower(path), ".vmem") || strings.HasSuffix(strings.ToLower(path), ".vmdk") || strings.HasSuffix(strings.ToLower(path), ".vdi") || strings.HasSuffix(strings.ToLower(path), ".vhd") || strings.HasSuffix(strings.ToLower(path), ".vhdx") || strings.HasSuffix(strings.ToLower(path), ".raw") || strings.HasSuffix(strings.ToLower(path), ".dd")) {
-				found = append(found, path)
+			if err == nil && !info.IsDir() && filePattern.MatchString(path) {
+				if info.Size() > 64*1024*1024 { 
+					fmt.Println("    [+] Found candidate:", path, "-", fmt.Sprintf("%.1f MB", float64(info.Size())/1024.0/1024.0))
+					found = append(found, path)
+				} else {
+					fmt.Println("    [-] Skipping small file:", path)
+				}
 			}
 			return nil
 		})
@@ -140,7 +162,7 @@ func handleRemoteScan(host, user, pass string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
-	remotePath := `C:\\Users\\Public\\hyperscan.exe`
+	remotePath := `C:\Users\Public\hyperscan.exe`
 
 	exeContent, err := os.ReadFile(exePath)
 	if err != nil {
@@ -166,14 +188,14 @@ func handleRemoteScan(host, user, pass string) error {
 	fmt.Println("[*] Hyperscan server started on remote host.")
 
 	remoteFiles, err := findRemoteVMFiles(client)
-		if err != nil {
-			return fmt.Errorf("failed to find remote VM files: %w", err)
-		}
+	if err != nil {
+		return fmt.Errorf("failed to find remote VM files: %w", err)
+	}
 
-		if len(remoteFiles) == 0 {
-			fmt.Println("[-] No supported files found on remote system.")
-			return nil
-		}
+	if len(remoteFiles) == 0 {
+		fmt.Println("[-] No supported files found on remote system.")
+		return nil
+	}
 
 	for _, file := range remoteFiles {
 		fmt.Printf("[*] Scanning remote file: %s\n", file)
@@ -192,11 +214,10 @@ func handleRemoteScan(host, user, pass string) error {
 		}
 
 		var results map[string]interface{}
-		if err := json.NewDecoder(resp.Body).Decode(&results);
-			err != nil {
-				fmt.Printf("[-] Failed to decode JSON response for %s: %v\n", file, err)
-				continue
-			}
+		if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+			fmt.Printf("[-] Failed to decode JSON response for %s: %v\n", file, err)
+			continue
+		}
 		printResults(results, jsonOutput)
 	}
 
@@ -213,10 +234,13 @@ func findRemoteVMFiles(client *winrm.Client) ([]string, error) {
 			"C:\\ProgramData\\VMware",
 			"C:\\Program Files (x86)\\VMware\\VMware Workstation",
 			"C:\\VirtualBox VMs",
+			"C:\\ProgramData\\Microsoft\\Windows\\Hyper-V\\Virtual Machines",
 			"D:\\VMs\\"
 		)
 		foreach ($base in $commonPaths) {
-			$files += Get-ChildItem -Path $base -Recurse -Include *.vmem,*.vmdk,*.vdi,*.vhd,*.vhdx,*.raw,*.dd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+			if (Test-Path $base) {
+				$files += Get-ChildItem -Path $base -Recurse -Include *.vmem,*.vmdk,*.vdi,*.vhd,*.vhdx,*.raw,*.dd,*.bin,*.vsv,*.avhdx -ErrorAction SilentlyContinue | Where-Object { $_.Length -gt 67108864 } | Select-Object -ExpandProperty FullName
+			}
 		}
 		$files | ConvertTo-Json
 	`
@@ -229,10 +253,9 @@ func findRemoteVMFiles(client *winrm.Client) ([]string, error) {
 	}
 
 	var remoteFiles []string
-	if err := json.Unmarshal(stdout.Bytes(), &remoteFiles);
-		err != nil {
-			return nil, fmt.Errorf("failed to unmarshal remote files JSON: %w\nOutput: %s", err, stdout.String())
-		}
+	if err := json.Unmarshal(stdout.Bytes(), &remoteFiles); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal remote files JSON: %w\nOutput: %s", err, stdout.String())
+	}
 
 	return remoteFiles, nil
 }
@@ -249,7 +272,6 @@ func printResults(results map[string]interface{}, jsonOutput bool) {
 		for name, matches := range results {
 			if stringSlice, ok := matches.([]string); ok {
 				fmt.Printf("[+] Found %d %s matches:\n", len(stringSlice), name)
-
 				for _, m := range stringSlice {
 					fmt.Println("    ", m)
 				}
@@ -257,3 +279,4 @@ func printResults(results map[string]interface{}, jsonOutput bool) {
 		}
 	}
 }
+
