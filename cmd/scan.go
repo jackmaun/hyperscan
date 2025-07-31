@@ -250,7 +250,7 @@ func handleSMBScan(host, share, path, pattern, user, pass string, threads int) e
 
 	go func() {
 		for p := range progressChan {
-			if totalFiles == 0 {
+			if p > 1 {
 				totalFiles = p
 				fmt.Printf("[*] Found %d files to scan.\n", totalFiles)
 			} else {

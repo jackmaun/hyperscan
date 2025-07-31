@@ -145,7 +145,9 @@ func scanSMBFile(fs *smb2.Share, path string, results map[string]interface{}, mu
                 threads = 1
             }
 
+            fmt.Printf("[*] Reading file into memory: %s...", path)
             content, err := io.ReadAll(f)
+            fmt.Print("\r" + strings.Repeat(" ", len(fmt.Sprintf("[*] Reading file into memory: %s...", path))) + "\r")
             if err != nil {
                 fmt.Printf("[-] Failed to read file %s: %v\n", path, err)
                 return
