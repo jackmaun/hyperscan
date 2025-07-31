@@ -1,15 +1,24 @@
 package scanners
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/hirochachacha/go-smb2"
 )
+
+type fileInfo struct {
+	path string
+	size int64
+}
 
 func ScanSMBShare(host, share, path, pattern, user, pass string, threads int) (map[string]interface{}, error) {
 	conn, err := net.Dial("tcp", host+":445")
@@ -51,7 +60,16 @@ func ScanSMBShare(host, share, path, pattern, user, pass string, threads int) (m
 	go func() {
 		defer wg.Done()
 		defer close(fileChan)
-		walkSMB(fs, path, filePattern, fileChan)
+		var files []fileInfo
+		walkSMB(fs, path, filePattern, &files)
+
+		sort.Slice(files, func(i, j int) bool {
+			return files[i].size < files[j].size
+		})
+
+		for _, file := range files {
+			fileChan <- file.path
+		}
 	}()
 
 	for i := 0; i < threads; i++ {
@@ -69,20 +87,20 @@ func ScanSMBShare(host, share, path, pattern, user, pass string, threads int) (m
 	return results, nil
 }
 
-func walkSMB(fs *smb2.Share, path string, pattern *regexp.Regexp, fileChan chan<- string) {
-	files, err := fs.ReadDir(path)
+func walkSMB(fs *smb2.Share, path string, pattern *regexp.Regexp, files *[]fileInfo) {
+	items, err := fs.ReadDir(path)
 	if err != nil {
 		fmt.Printf("[-] Failed to read directory %s: %v\n", path, err)
 		return
 	}
 
-	for _, file := range files {
-		fullPath := filepath.Join(path, file.Name())
-		if file.IsDir() {
-			walkSMB(fs, fullPath, pattern, fileChan)
+	for _, item := range items {
+		fullPath := filepath.Join(path, item.Name())
+		if item.IsDir() {
+			walkSMB(fs, fullPath, pattern, files)
 		} else {
-			if pattern.MatchString(file.Name()) {
-				fileChan <- fullPath
+			if pattern.MatchString(item.Name()) {
+				*files = append(*files, fileInfo{path: fullPath, size: item.Size()})
 			}
 		}
 	}
@@ -103,8 +121,25 @@ func scanSMBFile(fs *smb2.Share, path string, results map[string]interface{}, mu
 		return
 	}
 	if fi.Size() > maxFileSize {
-		fmt.Printf("[*] Skipping large file: %s (%d bytes)\n", path, fi.Size())
-		return
+		fmt.Printf("[*] Large file found: %s (%d bytes)\n", path, fi.Size())
+		fmt.Print("Choose an option: [S]can, [C]ontinue, [X]it: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		input = strings.ToLower(strings.TrimSpace(input))
+
+		switch input {
+		case "s":
+
+		case "c":
+			fmt.Printf("[*] Skipping file: %s\n", path)
+			return
+		case "x":
+			fmt.Println("[-] Scan cancelled by user.")
+			os.Exit(0)
+		default:
+			fmt.Printf("[*] Invalid input. Skipping file: %s\n", path)
+			return
+		}
 	}
 
 	content, err := io.ReadAll(f)
