@@ -241,8 +241,27 @@ func handleRemoteScan(host, user, pass string) error {
 }
 
 func handleSMBScan(host, share, path, pattern, user, pass string, threads int) error {
-	fmt.Println("[*] Starting SMB scan...")
-	results, err := scanners.ScanSMBShare(host, share, path, pattern, user, pass, threads)
+	fmt.Printf("[*] Starting SMB scan on %s/%s (path: %s, pattern: %s)...\n", host, share, path, pattern)
+
+
+	progressChan := make(chan int)
+	var totalFiles int
+	var processedFiles int
+
+	go func() {
+		for p := range progressChan {
+			if totalFiles == 0 {
+				totalFiles = p
+				fmt.Printf("[*] Found %d files to scan.\n", totalFiles)
+			} else {
+				processedFiles += p
+				fmt.Printf("\r[*] Progress: %d/%d files scanned...", processedFiles, totalFiles)
+			}
+		}
+		fmt.Println("\n[*] SMB scan complete.")
+	}()
+
+	results, err := scanners.ScanSMBShare(host, share, path, pattern, user, pass, threads, progressChan)
 	if err != nil {
 		return fmt.Errorf("SMB scan failed: %w", err)
 	}

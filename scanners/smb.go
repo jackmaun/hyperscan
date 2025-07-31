@@ -21,7 +21,7 @@ type fileInfo struct {
 	size int64
 }
 
-func ScanSMBShare(host, share, path, pattern, user, pass string, threads int) (map[string]interface{}, error) {
+func ScanSMBShare(host, share, path, pattern, user, pass string, threads int, progressChan chan<- int) (map[string]interface{}, error) {
 	conn, err := net.Dial("tcp", host+":445")
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to SMB host: %w", err)
@@ -75,15 +75,21 @@ func ScanSMBShare(host, share, path, pattern, user, pass string, threads int) (m
 
 	for i := 0; i < threads; i++ {
 		wg.Add(1)
-		go func() {
+		go func(progressChan chan<- int) {
 			defer wg.Done()
 			for path := range fileChan {
-				scanSMBFile(fs, path, results, mutex)
+				scanSMBFile(fs, path, results, mutex, progressChan)
+				if progressChan != nil {
+					progressChan <- 1
+				}
 			}
-		}()
+		}(progressChan)
 	}
 
 	wg.Wait()
+	if progressChan != nil {
+		close(progressChan)
+	}
 
 	return results, nil
 }
@@ -107,7 +113,7 @@ func walkSMB(fs *smb2.Share, path string, pattern *regexp.Regexp, files *[]fileI
 	}
 }
 
-func scanSMBFile(fs *smb2.Share, path string, results map[string]interface{}, mutex *sync.Mutex) {
+func scanSMBFile(fs *smb2.Share, path string, results map[string]interface{}, mutex *sync.Mutex, progressChan chan<- int) {
 	f, err := fs.Open(path)
 	if err != nil {
 		fmt.Printf("[-] Failed to open file %s: %v\n", path, err)
