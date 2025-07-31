@@ -2,6 +2,7 @@ package extractors
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,19 +16,40 @@ func CarveBrowserData(data []byte, outDir string) ([]string, error) {
 	indexes := findAll(data, sqliteHeader)
 
 	for _, index := range indexes {
-		end := index + 1024*1024
-		if end > len(data) {
-			end = len(data)
+		if index+100 > len(data) {
+			continue
 		}
 
-		searchEnd := end
-		if searchEnd > len(data) {
-			searchEnd = len(data)
+        var pageSize uint32
+        buf := bytes.NewReader(data[index+16 : index+18])
+        err := binary.Read(buf, binary.BigEndian, &pageSize)
+        if err != nil {
+            fmt.Printf("[-] Error reading page size at offset %d: %v\n", index, err)
+            continue
+        }
+
+        if pageSize == 1 {
+            pageSize = 65536
+        }
+
+		dbSize := 0
+		for pageNum := 0; ; pageNum++ {
+			pageStart := index + pageNum*int(pageSize)
+			if pageStart >= len(data) {
+				break
+			}
+
+			if pageNum > 0 && data[pageStart] == 0x00 {
+				break
+			}
+			dbSize = (pageNum + 1) * int(pageSize)
 		}
-		potentialEnd := bytes.LastIndex(data[index:searchEnd], []byte("sqlite_master"))
-		if potentialEnd != -1 {
-			end = index + potentialEnd + 200
+
+		if dbSize == 0 {
+			continue
 		}
+
+		end := index + dbSize
 		if end > len(data) {
 			end = len(data)
 		}
@@ -36,7 +58,7 @@ func CarveBrowserData(data []byte, outDir string) ([]string, error) {
 
 		outPath := filepath.Join(outDir, fmt.Sprintf("carved_browser_db_%d.sqlite", index))
 
-		err := os.WriteFile(outPath, carvedData, 0644)
+		err = os.WriteFile(outPath, carvedData, 0644)
 		if err != nil {
 			fmt.Printf("[-] Failed to write carved browser data to %s: %v\n", outPath, err)
 			continue

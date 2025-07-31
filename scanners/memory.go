@@ -49,10 +49,18 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 	}
 	defer mmapData.Unmap()
 
+	return scanMemory(mmapData, outDir, threads)
+}
+
+func ScanMemoryFromBytes(data []byte, outDir string, threads int) (map[string]interface{}, error) {
+	return scanMemory(data, outDir, threads)
+}
+
+func scanMemory(data []byte, outDir string, threads int) (map[string]interface{}, error) {
 	results := make(map[string]interface{})
 	var mutex = &sync.Mutex{}
 
-	bar := pb.StartNew(len(mmapData))
+	bar := pb.StartNew(len(data))
 	bar.Set(pb.Bytes, true)
 
 	var wg sync.WaitGroup
@@ -60,7 +68,7 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 
 	go func() {
 		defer wg.Done()
-		carved, err := extractors.CarveBrowserData(mmapData, outDir)
+		carved, err := extractors.CarveBrowserData(data, outDir)
 		if err != nil {
 			fmt.Println("[-] Browser data carving failed:", err)
 			return
@@ -81,7 +89,7 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 			go func() {
 				defer patternWg.Done()
 				for job := range jobs {
-					matches := job.re.FindAll(mmapData, -1)
+					matches := job.re.FindAll(data, -1)
 					if len(matches) > 0 {
 						var stringMatches []string
 						for _, m := range matches {
@@ -91,7 +99,7 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 						results[job.name] = stringMatches
 						mutex.Unlock()
 					}
-					bar.Add(len(mmapData) / len(patterns))
+					bar.Add(len(data) / len(patterns))
 				}
 			}()
 		}
@@ -104,17 +112,17 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 
 	go func() {
 		defer wg.Done()
-		scanEntropyRegions(mmapData, 64, 32, 4.8, results, mutex)
+		scanEntropyRegions(data, 64, 32, 4.8, results, mutex)
 	}()
 
 	go func() {
 		defer wg.Done()
-		extractors.CarveRegistryHives(mmapData, outDir)
+		extractors.CarveRegistryHives(data, outDir)
 	}()
 
 	go func() {
 		defer wg.Done()
-		carved, err := extractors.CarveLsass(mmapData, outDir)
+		carved, err := extractors.CarveLsass(data, outDir)
 		if err != nil {
 			fmt.Println("[-] LSASS carving failed:", err)
 			return
@@ -132,6 +140,7 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 
 	return results, nil
 }
+
 
 func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mutex *sync.Mutex) {
 	var highEntropyRegions []string

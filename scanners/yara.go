@@ -87,3 +87,4 @@ func ScanYara(path string, rulesPath string, outDir string, jsonOutput bool, thr
 
 	return results, nil
 }
+

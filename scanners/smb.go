@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -129,6 +130,35 @@ func scanSMBFile(fs *smb2.Share, path string, results map[string]interface{}, mu
 
 		switch input {
 		case "s":
+            fmt.Print("Enter number of threads for scanning: ")
+            reader := bufio.NewReader(os.Stdin)
+            threadInput, _ := reader.ReadString('\n')
+            threads, err := strconv.Atoi(strings.TrimSpace(threadInput))
+            if err != nil {
+                fmt.Println("[-] Invalid input for threads, defaulting to 1")
+                threads = 1
+            }
+
+            content, err := io.ReadAll(f)
+            if err != nil {
+                fmt.Printf("[-] Failed to read file %s: %v\n", path, err)
+                return
+            }
+
+            outDir := "./output"
+
+            memResults, err := ScanMemoryFromBytes(content, outDir, threads)
+            if err != nil {
+                fmt.Printf("[-] Memory scan for %s failed: %v\n", path, err)
+                return
+            }
+
+            mutex.Lock()
+            for k, v := range memResults {
+                results[k] = v
+            }
+            mutex.Unlock()
+            return
 
 		case "c":
 			fmt.Printf("[*] Skipping file: %s\n", path)

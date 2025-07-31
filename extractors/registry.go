@@ -30,7 +30,7 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		hiveSize := int(uint32(data[offset+0x0C]) | uint32(data[offset+0x0D])<<8 | uint32(data[offset+0x0E])<<16 | uint32(data[offset+0x0F])<<24)
 
 		if hiveSize <= 0 || offset+hiveSize > len(data) {
-			color.Red("[-] Skipping regf at 0x%X: invalid size (%d bytes)", offset, hiveSize)
+			
 			offset += len(regfHeader)
 			continue
 		}

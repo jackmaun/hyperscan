@@ -154,12 +154,12 @@ func findVMFiles() ([]string, error) {
 		fmt.Println("[*] Searching:", base)
 		_ = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 			if err == nil && !info.IsDir() && filePattern.MatchString(path) {
-				if info.Size() > 64*1024*1024 { 
-					fmt.Println("    [+] Found candidate:", path, "-", fmt.Sprintf("%.1f MB", float64(info.Size())/1024.0/1024.0))
-					found = append(found, path)
-				} else {
-					fmt.Println("    [-] Skipping small file:", path)
-				}
+									if info.Size() > 64*1024*1024 { 
+						fmt.Println("    [+] Found candidate:", path, "-", fmt.Sprintf("%.1f MB", float64(info.Size())/1024.0/1024.0))
+						found = append(found, path)
+					} else {
+						fmt.Println("    [-] Skipping small file:", path)
+					}
 			}
 			return nil
 		})
