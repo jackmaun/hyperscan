@@ -25,6 +25,10 @@ var remoteScan bool
 var remoteHost string
 var remoteUser string
 var remotePass string
+var smbScan bool
+var smbShare string
+var smbSharePath string
+var smbFilePattern string
 var jsonOutput bool
 var threads int
 
@@ -40,6 +44,14 @@ var scanCmd = &cobra.Command{
 				return
 			}
 			printResults(results, jsonOutput)
+			return
+		}
+
+		if smbScan {
+			err := handleSMBScan(remoteHost, smbShare, smbSharePath, smbFilePattern, remoteUser, remotePass, threads)
+			if err != nil {
+				fmt.Println("[-] SMB scan failed:", err)
+			}
 			return
 		}
 
@@ -74,8 +86,8 @@ var scanCmd = &cobra.Command{
 			return
 		}
 
-		if inputPath == "" {
-			fmt.Println("[-] No input file specified. Use --input or --auto or --remote.")
+		if inputPath == "" && !autoScan && !remoteScan && !smbScan {
+			fmt.Println("[-] No input file specified. Use --input, --auto, --remote, or --smb.")
 			return
 		}
 
@@ -96,6 +108,10 @@ func init() {
 	scanCmd.Flags().StringVar(&remoteHost, "host", "", "Remote host IP or name")
 	scanCmd.Flags().StringVar(&remoteUser, "username", "", "Remote username")
 	scanCmd.Flags().StringVar(&remotePass, "password", "", "Remote password")
+	scanCmd.Flags().BoolVar(&smbScan, "smb", false, "Scan a remote SMB share")
+	scanCmd.Flags().StringVar(&smbShare, "share", "", "SMB share path (e.g., C$/Users)")
+	scanCmd.Flags().StringVar(&smbSharePath, "share-path", ".", "Path within the SMB share to start scanning")
+	scanCmd.Flags().StringVar(&smbFilePattern, "file-pattern", ".*", "Regex pattern to filter files to scan")
 	scanCmd.Flags().BoolVar(&jsonOutput, "json", false, "Enable JSON output")
 	scanCmd.Flags().IntVarP(&threads, "threads", "t", 1, "Number of threads for parallel scanning")
 	AddCommand(scanCmd)
@@ -221,6 +237,16 @@ func handleRemoteScan(host, user, pass string) error {
 		printResults(results, jsonOutput)
 	}
 
+	return nil
+}
+
+func handleSMBScan(host, share, path, pattern, user, pass string, threads int) error {
+	fmt.Println("[*] Starting SMB scan...")
+	results, err := scanners.ScanSMBShare(host, share, path, pattern, user, pass, threads)
+	if err != nil {
+		return fmt.Errorf("SMB scan failed: %w", err)
+	}
+	printResults(results, jsonOutput)
 	return nil
 }
 

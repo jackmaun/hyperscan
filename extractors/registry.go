@@ -23,22 +23,20 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		offset += index
 
 		if offset+0x10 > len(data) {
-			fmt.Printf("[-] Skipping regf at 0x%X: not enough data for size field\n", offset)
 			offset += len(regfHeader)
 			continue
 		}
 
-		hiveSize := int(uint32(data[offset+0x0C])|uint32(data[offset+0x0D])<<8|uint32(data[offset+0x0E])<<16|uint32(data[offset+0x0F])<<24)
+		hiveSize := int(uint32(data[offset+0x0C]) | uint32(data[offset+0x0D])<<8 | uint32(data[offset+0x0E])<<16 | uint32(data[offset+0x0F])<<24)
 
 		if hiveSize <= 0 || offset+hiveSize > len(data) {
-			fmt.Printf("[-] Skipping regf at 0x%X: invalid size (%d bytes)\n", offset, hiveSize)
+			color.Red("[-] Skipping regf at 0x%X: invalid size (%d bytes)", offset, hiveSize)
 			offset += len(regfHeader)
 			continue
 		}
 
 		hbinOffset := offset + 0x1000
 		if hbinOffset+4 > len(data) || !bytes.Equal(data[hbinOffset:hbinOffset+4], []byte("hbin")) {
-			fmt.Printf("[-] Skipping regf at 0x%X: missing 'hbin' at offset 0x%X\n", offset, hbinOffset)
 			offset += len(regfHeader)
 			continue
 		}
@@ -46,7 +44,6 @@ func CarveRegistryHives(data []byte, outDir string) error {
 		chunk := data[offset : offset+hiveSize]
 
 		if !bytes.Contains(chunk, []byte("nk")) {
-			fmt.Printf("[-] Skipping regf at 0x%X: missing 'nk' record\n", offset)
 			offset += len(regfHeader)
 			continue
 		}
@@ -63,7 +60,7 @@ func CarveRegistryHives(data []byte, outDir string) error {
 			return fmt.Errorf("failed to write hive to %s: %w", outPath, err)
 		}
 
-		fmt.Printf(color.GreenString("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)\n", label, outPath, offset, hiveSize))
+		color.Green("[+] Carved %s hive to %s (offset: 0x%X, size: %d bytes)", label, outPath, offset, hiveSize)
 		offset += hiveSize
 	}
 

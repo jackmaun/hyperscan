@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sync"
 
+	"github.com/cheggaaa/pb/v3"
 	"github.com/edsrzf/mmap-go"
 	"github.com/jackmaun/hyperscan/extractors"
 )
@@ -52,7 +52,8 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 	results := make(map[string]interface{})
 	var mutex = &sync.Mutex{}
 
-	fmt.Printf("Scanning memory file (%s, size: %d bytes) with %d threads...\n", filepath.Base(path), len(mmapData), threads)
+	bar := pb.StartNew(len(mmapData))
+	bar.Set(pb.Bytes, true)
 
 	var wg sync.WaitGroup
 	wg.Add(5)
@@ -90,6 +91,7 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 						results[job.name] = stringMatches
 						mutex.Unlock()
 					}
+					bar.Add(len(mmapData) / len(patterns))
 				}
 			}()
 		}
@@ -125,6 +127,8 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 	}()
 
 	wg.Wait()
+
+	bar.Finish()
 
 	return results, nil
 }
