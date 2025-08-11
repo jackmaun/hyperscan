@@ -69,7 +69,10 @@ hyperscan scan --input ./memory.raw --yara ./rules
 hyperscan scan --auto
 
 # Scan a remote host
-hyperscan scan --remote --host 192.168.1.100 --username Administrator --password 'CrazyPassword14!'
+hyperscan scan --remote --host <remote-host> --username Administrator --password 'CrazyPassword14!'
+
+# Remote SMB Share Scanning
+hyperscan scan --remote --smb --host <remote-host> --share <smb-share> --share-path <path-to-scan> --username Administrator --password 'CrazyPassword14!' --file-pattern <regex-pattern>
 ```
 
 ---
