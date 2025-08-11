@@ -9,7 +9,8 @@
 - Scan local memory/disk images, including `.vmem`, `.vmdk`, `.vdi`, `.vhd`, `.vhdx`, `.raw`, and `.dd` files.
 - Entropy-based secret detection.
 - Auto-discover VM files in common Windows directories.
-- Remote scanning (scan on target).
+- Binary upload and serve (scan on target).
+- Remote scanning via SMB or WinRM, including targeted SMB share scanning (search for large files over SMB and scan for secrets remotely)
 
 - Carves and classifies registry hives (SAM, SYSTEM, SECURITY).
 - Carves LSASS process memory.
@@ -45,7 +46,7 @@ sudo apt-get install libyara-dev
 ### Installation
 
 ```bash
-go build -o hyperscan
+go build -o .
 ```
 
 ---
@@ -85,11 +86,16 @@ hyperscan scan --remote --smb --host <remote-host> --share <smb-share> --share-p
 --threads, -t       Number of threads for parallel scanning (default: 1)
 --auto              Automatically scan local common VM file locations
 --json              Enable JSON output
+--file-pattern      Regex pattern to filter files
 
 --remote            Enable remote scanning
 --host              Remote host IP or name
 --username          Remote login username
 --password          Remote login password
+--smb               Use SMB protocol for remote scanning
+--share             SMB share name (e.g., C$)
+--share-path        Path inside the SMB share to start searching
+--winrm             Use WinRM protocol for remote scanning
 ```
 
 ---
