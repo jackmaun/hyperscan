@@ -13,21 +13,21 @@ import (
 )
 
 var patterns = map[string]*regexp.Regexp{
-	"AWS Access Key":            regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	"JWT":                       regexp.MustCompile(`eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+`),
-	"Password Key":              regexp.MustCompile(`(?i)password\s*=\s*[^\"]{4,}`),
-	"NTLM Hash":                 regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
-	"NTLMv2 Hash":               regexp.MustCompile(`[a-zA-Z0-9_.\\-]+::[a-zA-Z0-9_.\\-]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,256}:.+`),
-	"NetNTLMv2 Challenge":       regexp.MustCompile(`[^\s:]+::[^\s:]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,}`),
-	"LM:NTLM Hash Pair":         regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
-	"Kerberos KRB-CRED":         regexp.MustCompile(`KRB-CRED`),
-	"Kerberos Ticket ASN.1":     regexp.MustCompile(`\x6e\x82[\x00-\xff]{2}\x30\x82`),
-	"Kerberos Base64 Ticket":    regexp.MustCompile(`(?:YII|doIF)[A-Za-z0-9+/=]{100,}`),
-	"DPAPI GUID":                regexp.MustCompile(`(?i)\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}`),
-	"DPAPI Blob":                regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
-	"SSH Private Key":           regexp.MustCompile(`-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----`),
-	"Google Cloud API Key":      regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`),
-	"Azure Client Secret":       regexp.MustCompile(`[a-zA-Z0-9\-_~\.]{40}`),
+	"AWS Access Key":         regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
+	"JWT":                    regexp.MustCompile(`eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+`),
+	"Password Key":           regexp.MustCompile(`(?i)password\s*=\s*[^\"]{4,}`),
+	"NTLM Hash":              regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
+	"NTLMv2 Hash":            regexp.MustCompile(`[a-zA-Z0-9_.\\-]+::[a-zA-Z0-9_.\\-]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,256}:.+`),
+	"NetNTLMv2 Challenge":    regexp.MustCompile(`[^\s:]+::[^\s:]+:[a-fA-F0-9]{16}:[a-fA-F0-9]{32,}`),
+	"LM:NTLM Hash Pair":      regexp.MustCompile(`[a-fA-F0-9]{32}:[a-fA-F0-9]{32}`),
+	"Kerberos KRB-CRED":      regexp.MustCompile(`KRB-CRED`),
+	"Kerberos Ticket ASN.1":  regexp.MustCompile(`\x6e\x82[\x00-\xff]{2}\x30\x82`),
+	"Kerberos Base64 Ticket": regexp.MustCompile(`(?:YII|doIF)[A-Za-z0-9+/=]{100,}`),
+	"DPAPI GUID":             regexp.MustCompile(`(?i)\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}`),
+	"DPAPI Blob":             regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
+	"SSH Private Key":        regexp.MustCompile(`-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----`),
+	"Google Cloud API Key":   regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`),
+	"Azure Client Secret":    regexp.MustCompile(`[a-zA-Z0-9\-_~\.]{40}`),
 }
 
 type patternJob struct {
@@ -36,7 +36,8 @@ type patternJob struct {
 }
 
 func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[string]interface{}, error) {
-	os.MkdirAll(outDir, 0755)
+	_ = os.MkdirAll(outDir, 0755)
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
@@ -49,16 +50,17 @@ func ScanMemory(path string, outDir string, jsonOutput bool, threads int) (map[s
 	}
 	defer mmapData.Unmap()
 
-	return scanMemory(mmapData, outDir, threads)
+	return scanMemoryCore(mmapData, outDir, threads, path)
 }
 
 func ScanMemoryFromBytes(data []byte, outDir string, threads int) (map[string]interface{}, error) {
-	return scanMemory(data, outDir, threads)
+	_ = os.MkdirAll(outDir, 0755)
+	return scanMemoryCore(data, outDir, threads, "")
 }
 
-func scanMemory(data []byte, outDir string, threads int) (map[string]interface{}, error) {
+func scanMemoryCore(data []byte, outDir string, threads int, filePath string) (map[string]interface{}, error) {
 	results := make(map[string]interface{})
-	var mutex = &sync.Mutex{}
+	var mu sync.Mutex
 
 	bar := pb.StartNew(len(data))
 	bar.Set(pb.Bytes, true)
@@ -69,35 +71,33 @@ func scanMemory(data []byte, outDir string, threads int) (map[string]interface{}
 	go func() {
 		defer wg.Done()
 		carved, err := extractors.CarveBrowserData(data, outDir)
-		if err != nil {
-			fmt.Println("[-] Browser data carving failed:", err)
-			return
-		}
-		if len(carved) > 0 {
-			mutex.Lock()
+		if err == nil && len(carved) > 0 {
+			mu.Lock()
 			results["Carved Browser Databases"] = carved
-			mutex.Unlock()
+			mu.Unlock()
+		} else if err != nil {
+			fmt.Println("[-] Browser data carving failed:", err)
 		}
 	}()
 
 	go func() {
 		defer wg.Done()
 		jobs := make(chan patternJob, len(patterns))
-		var patternWg sync.WaitGroup
+		var pwg sync.WaitGroup
 		for i := 0; i < threads; i++ {
-			patternWg.Add(1)
+			pwg.Add(1)
 			go func() {
-				defer patternWg.Done()
+				defer pwg.Done()
 				for job := range jobs {
 					matches := job.re.FindAll(data, -1)
 					if len(matches) > 0 {
-						var stringMatches []string
+						var out []string
 						for _, m := range matches {
-							stringMatches = append(stringMatches, string(m))
+							out = append(out, string(m))
 						}
-						mutex.Lock()
-						results[job.name] = stringMatches
-						mutex.Unlock()
+						mu.Lock()
+						results[job.name] = out
+						mu.Unlock()
 					}
 					bar.Add(len(data) / len(patterns))
 				}
@@ -107,54 +107,64 @@ func scanMemory(data []byte, outDir string, threads int) (map[string]interface{}
 			jobs <- patternJob{name: name, re: re}
 		}
 		close(jobs)
-		patternWg.Wait()
+		pwg.Wait()
 	}()
 
 	go func() {
 		defer wg.Done()
-		scanEntropyRegions(data, 64, 32, 4.8, results, mutex)
+		scanEntropyRegions(data, 64, 32, 4.8, results, &mu)
 	}()
 
 	go func() {
 		defer wg.Done()
-		extractors.CarveRegistryHives(data, outDir)
+		var carved []string
+		var err error
+		if filePath != "" {
+			carved, err = extractors.CarveRegistryHivesStream(filePath, outDir, 256<<20, 0x4000)
+		} else {
+			carved, err = extractors.CarveRegistryHives(data, outDir)
+		}
+		if err != nil {
+			fmt.Println("[-] Registry carving failed:", err)
+		}
+		if len(carved) > 0 {
+			mu.Lock()
+			results["Carved Registry Hives"] = carved
+			mu.Unlock()
+		}
 	}()
 
 	go func() {
 		defer wg.Done()
 		carved, err := extractors.CarveLsass(data, outDir)
-		if err != nil {
-			fmt.Println("[-] LSASS carving failed:", err)
-			return
-		}
-		if len(carved) > 0 {
-			mutex.Lock()
+		if err == nil && len(carved) > 0 {
+			mu.Lock()
 			results["Carved LSASS Dumps"] = carved
-			mutex.Unlock()
+			mu.Unlock()
+		} else if err != nil {
+			fmt.Println("[-] LSASS carving failed:", err)
 		}
 	}()
 
 	wg.Wait()
-
 	bar.Finish()
 
 	return results, nil
 }
 
-
-func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mutex *sync.Mutex) {
-	var highEntropyRegions []string
+func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mu *sync.Mutex) {
+	var hits []string
 	for i := 0; i < len(data)-windowSize; i += step {
 		window := data[i : i+windowSize]
-		ent := shannonEntropy(window)
-		if ent >= threshold {
-			highEntropyRegions = append(highEntropyRegions, fmt.Sprintf("High entropy region (%.2f) at offset 0x%X", ent, i))
+		e := shannonEntropy(window)
+		if e >= threshold {
+			hits = append(hits, fmt.Sprintf("High entropy region (%.2f) at offset 0x%X", e, i))
 		}
 	}
-	if len(highEntropyRegions) > 0 {
-		mutex.Lock()
-		results["High Entropy Regions"] = highEntropyRegions
-		mutex.Unlock()
+	if len(hits) > 0 {
+		mu.Lock()
+		results["High Entropy Regions"] = hits
+		mu.Unlock()
 	}
 }
 
@@ -167,20 +177,13 @@ func shannonEntropy(data []byte) float64 {
 		freq[b]++
 	}
 	var entropy float64
-	length := float64(len(data))
-	for _, count := range freq {
-		if count == 0 {
+	n := float64(len(data))
+	for _, c := range freq {
+		if c == 0 {
 			continue
 		}
-		p := count / length
+		p := c / n
 		entropy -= p * math.Log2(p)
 	}
 	return entropy
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
