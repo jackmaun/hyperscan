@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/hyperscan-gopher.png" alt="Hyperscan Banner" width="800"/>
+  <img src="docs/hyperscan-banner.png" alt="Hyperscan Banner" width="800"/>
 </p>
 
 
