@@ -24,7 +24,7 @@ var patterns = map[string]*regexp.Regexp{
 	"Kerberos Ticket ASN.1":  regexp.MustCompile(`\x6e\x82[\x00-\xff]{2}\x30\x82`),
 	"Kerberos Base64 Ticket": regexp.MustCompile(`(?:YII|doIF)[A-Za-z0-9+/=]{100,}`),
 	"DPAPI GUID":             regexp.MustCompile(`(?i)\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}`),
-	"DPAPI Blob":             regexp.MustCompile(`(?s)\x01\x00\x00\x00.{80,700}`),
+	"DPAPI Blob":             regexp.MustCompile(`(?s)DPAPI.{64,}?`),
 	"SSH Private Key":        regexp.MustCompile(`-----BEGIN ((EC|PGP|DSA|RSA|OPENSSH) )?PRIVATE KEY( BLOCK)?-----`),
 	"Google Cloud API Key":   regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`),
 	"Azure Client Secret":    regexp.MustCompile(`[a-zA-Z0-9\-_~\.]{40}`),
@@ -112,7 +112,7 @@ func scanMemoryCore(data []byte, outDir string, threads int, filePath string) (m
 
 	go func() {
 		defer wg.Done()
-		scanEntropyRegions(data, 64, 32, 4.8, results, &mu)
+		scanEntropyRegions(data, 2048, 512, 7.5, results, &mu)
 	}()
 
 	go func() {
@@ -153,12 +153,22 @@ func scanMemoryCore(data []byte, outDir string, threads int, filePath string) (m
 }
 
 func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mu *sync.Mutex) {
+	if windowSize < 2048 {
+		windowSize = 2048
+	}
+	if step <= 0 || step > windowSize/2 {
+		step = windowSize / 4
+	}
 	var hits []string
-	for i := 0; i < len(data)-windowSize; i += step {
+	for i := 0; i+windowSize <= len(data); i += step {
 		window := data[i : i+windowSize]
 		e := shannonEntropy(window)
 		if e >= threshold {
 			hits = append(hits, fmt.Sprintf("High entropy region (%.2f) at offset 0x%X", e, i))
+			if len(hits) >= 2000 {
+				hits = append(hits, "...truncated...")
+				break
+			}
 		}
 	}
 	if len(hits) > 0 {
@@ -187,3 +197,4 @@ func shannonEntropy(data []byte) float64 {
 	}
 	return entropy
 }
+

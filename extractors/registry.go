@@ -13,7 +13,6 @@ import (
 var regfHeader = []byte("regf")
 var hbinHeader = []byte("hbin")
 
-
 func asciiToUTF16LE(s string) []byte {
 	b := make([]byte, 0, len(s)*2)
 	for i := 0; i < len(s); i++ {
@@ -41,7 +40,6 @@ func readAtExact(r io.ReaderAt, off int64, buf []byte) error {
 	}
 	return nil
 }
-
 
 func classifyHive(chunk []byte) string {
 	u := asciiToUTF16LE
@@ -161,34 +159,53 @@ func stitchHive(r io.ReaderAt, start int64, filesize int64) ([]byte, error) {
 	if !bytes.Equal(hdr[:4], regfHeader) {
 		return nil, errors.New("not regf")
 	}
-	binsSize := int(binary.LittleEndian.Uint32(hdr[0x28:0x2C]))
-	if binsSize <= 0 || binsSize%0x1000 != 0 || binsSize > (1<<30) {
-		return nil, fmt.Errorf("invalid bins size %d", binsSize)
+
+	totalFromHdr := int(int32(binary.LittleEndian.Uint32(hdr[0x24:0x28])))
+	binsFromHdr := int(int32(binary.LittleEndian.Uint32(hdr[0x28:0x2C])))
+	if totalFromHdr >= 0x2000 && totalFromHdr%0x1000 == 0 && start+int64(totalFromHdr) <= filesize {
+		out := make([]byte, totalFromHdr)
+		copy(out, hdr)
+		read := 0
+		cur := start + 0x1000
+		for read < totalFromHdr-0x1000 {
+			chunk := make([]byte, 0x1000)
+			if cur+0x1000 > start+int64(totalFromHdr) {
+				sz := int((start + int64(totalFromHdr)) - cur)
+				chunk = make([]byte, sz)
+			}
+			if err := readAtExact(r, cur, chunk); err != nil {
+				return nil, err
+			}
+			copy(out[0x1000+read:], chunk)
+			read += len(chunk)
+			cur += int64(len(chunk))
+		}
+		return out, nil
 	}
 
-	out := make([]byte, 0, 0x1000+binsSize)
+	out := make([]byte, 0, 0x1000+(binsFromHdr&^0))
 	out = append(out, hdr...)
-
-	want := binsSize
 	expectRel := int64(0)
 	searchFrom := start + 0x1000
-
-	for want > 0 {
+	limit := 256 << 20
+	for len(out) < 0x1000+limit {
 		p, sz, err := findHBINWithRelOffset(r, searchFrom, expectRel, filesize)
 		if err != nil {
-			return nil, fmt.Errorf("find hbin(rel=%d): %w", expectRel, err)
+			break
 		}
-		if sz > want {
-			sz = want
+		if sz <= 0 {
+			break
 		}
 		bin := make([]byte, sz)
 		if err := readAtExact(r, p, bin); err != nil {
-			return nil, fmt.Errorf("read hbin: %w", err)
+			break
 		}
 		out = append(out, bin...)
-		want -= sz
 		expectRel += int64(sz)
 		searchFrom = p + int64(sz)
+	}
+	if len(out) < 0x2000 {
+		return nil, errors.New("incomplete hive")
 	}
 	return out, nil
 }
@@ -213,20 +230,30 @@ func CarveRegistryHives(data []byte, outDir string) ([]string, error) {
 			continue
 		}
 
-		ok := false
-		bins := int(binary.LittleEndian.Uint32(data[offset+0x28 : offset+0x2C]))
-		total := 0x1000 + bins
-		if bins > 0 && bins%0x1000 == 0 && total > 0 && offset+total <= len(data) {
-			if offset+0x1000+4 <= len(data) && bytes.Equal(data[offset+0x1000:offset+0x1004], hbinHeader) {
-				hive := data[offset : offset+total]
-				if p, err := writeHive(outDir, classifyHive(hive), int64(offset), hive); err == nil {
-					carved = append(carved, p)
-					seen[offset] = struct{}{}
-					ok = true
+		wrote := false
+		total := int(int32(binary.LittleEndian.Uint32(data[offset+0x24 : offset+0x28])))
+		if total >= 0x2000 && total%0x1000 == 0 && offset+total <= len(data) {
+			hive := data[offset : offset+total]
+			if p, err := writeHive(outDir, classifyHive(hive), int64(offset), hive); err == nil {
+				carved = append(carved, p)
+				seen[offset] = struct{}{}
+				wrote = true
+			}
+		} else {
+			bins := int(int32(binary.LittleEndian.Uint32(data[offset+0x28 : offset+0x2C])))
+			sum := 0x1000 + bins
+			if bins > 0 && bins%0x1000 == 0 && offset+sum <= len(data) {
+				if bytes.Equal(data[offset+0x1000:offset+0x1004], hbinHeader) {
+					hive := data[offset : offset+sum]
+					if p, err := writeHive(outDir, classifyHive(hive), int64(offset), hive); err == nil {
+						carved = append(carved, p)
+						seen[offset] = struct{}{}
+						wrote = true
+					}
 				}
 			}
 		}
-		if !ok {
+		if !wrote {
 			r := bytes.NewReader(data)
 			if hive, err := stitchHive(r, int64(offset), int64(len(data))); err == nil && len(hive) >= 0x1000 {
 				if p, werr := writeHive(outDir, classifyHive(hive), int64(offset), hive); werr == nil {
@@ -307,3 +334,4 @@ func CarveRegistryHivesStream(path string, outDir string, window, overlap int) (
 	}
 	return carved, nil
 }
+
