@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="docs/hyperscan-gopher.png" alt="Hyperscan Banner" width="800"/>
+</p>
+
+
 # hyperscan
 
 **hyperscan** is a memory and disk artifact scanner built for offensive security assessments. It scans a wide range of memory and disk image formats for sensitive data like credentials, tokens, registry hives, NTLM hashes, DPAPI material, and high-entropy blobs.
