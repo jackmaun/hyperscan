@@ -110,9 +110,11 @@ func scanMemoryCore(data []byte, outDir string, threads int, filePath string) (m
 		pwg.Wait()
 	}()
 
+	entropyCountCh := make(chan int, 1)
 	go func() {
 		defer wg.Done()
-		scanEntropyRegions(data, 2048, 512, 7.5, results, &mu)
+		c := scanEntropyRegions(data, 2048, 512, 7.5, results, &mu)
+		entropyCountCh <- c
 	}()
 
 	go func() {
@@ -149,33 +151,34 @@ func scanMemoryCore(data []byte, outDir string, threads int, filePath string) (m
 	wg.Wait()
 	bar.Finish()
 
+	select {
+	case c := <-entropyCountCh:
+		fmt.Printf("[*] High Entropy Regions: %d\n", c)
+	default:
+	}
+
 	return results, nil
 }
 
-func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mu *sync.Mutex) {
+func scanEntropyRegions(data []byte, windowSize, step int, threshold float64, results map[string]interface{}, mu *sync.Mutex) int {
 	if windowSize < 2048 {
 		windowSize = 2048
 	}
 	if step <= 0 || step > windowSize/2 {
 		step = windowSize / 4
 	}
-	var hits []string
+	count := 0
 	for i := 0; i+windowSize <= len(data); i += step {
 		window := data[i : i+windowSize]
 		e := shannonEntropy(window)
 		if e >= threshold {
-			hits = append(hits, fmt.Sprintf("High entropy region (%.2f) at offset 0x%X", e, i))
-			if len(hits) >= 2000 {
-				hits = append(hits, "...truncated...")
-				break
-			}
+			count++
 		}
 	}
-	if len(hits) > 0 {
-		mu.Lock()
-		results["High Entropy Regions"] = hits
-		mu.Unlock()
-	}
+	mu.Lock()
+	results["High Entropy Regions"] = count
+	mu.Unlock()
+	return count
 }
 
 func shannonEntropy(data []byte) float64 {
